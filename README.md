@@ -173,4 +173,5 @@ Barong JWT is released under the terms of the [Apache License 2.0](LICENSE.md).
 ## Credits
 Maintained by [Openware](https://github.com/openware) and used in its [cryptocurrency exchange software](https://www.openware.com) stack.
 
-
+### SonarQube Scanner Command ###
+> sonar-scanner -Dsonar.login=61607fed5b1910be8715d166bfad2ba33c90fc5a
