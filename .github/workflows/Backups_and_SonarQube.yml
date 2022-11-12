@@ -13,7 +13,7 @@ env:
   BACKBLAZE_APP_KEY      : ${{ secrets.B2_APPKEY }}
 
   # Parameters for B2 bucket.
-  BACKBLAZE_B2BUCKET     : 'b2://github-peer-inc-backups/'
+  BACKBLAZE_B2BUCKET     : 'b2://github-peer-inc-backups/exchange-socketgo'
   BACKBLAZE_B2_BUCKET_ID : '9af77c8b9d371ab3812e0913'
 
   # Parameters for making a backup-file:
