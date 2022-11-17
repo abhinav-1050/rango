@@ -42,10 +42,6 @@ on:
   push:
     branches:
       - 'master'
-      - 'stage'
-      - 'develop'
-      - 'feature/new_design_antech'
-      - '*-stable'
 
 
 
@@ -53,10 +49,6 @@ on:
   pull_request:
     branches:
       - 'master'
-      - 'stage'
-      - 'develop'
-      - 'feature/new_design_antech'
-      - '*-stable'
 
 jobs:
 # Part 1: CI
@@ -127,7 +119,7 @@ jobs:
 # Copy backups to BackBlaze
     - name: Copy archive to B2
       id: backups
-      uses: alximy/backblaze-b2-action@master
+      uses: PEER-Inc/backblaze-b2-custom-action@main
       env:
           B2_BUCKET: ${{ env.BACKBLAZE_B2BUCKET }}
           B2_APPKEY_ID: ${{ secrets.B2_APPKEY_ID }}
