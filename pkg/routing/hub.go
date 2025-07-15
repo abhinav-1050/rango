@@ -11,6 +11,7 @@ import (
 	"github.com/openware/rango/pkg/metrics"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
+	"github.com/segmentio/kafka-go"
 	"github.com/streadway/amqp"
 )
 
@@ -151,6 +152,49 @@ func (h *Hub) ReceiveMsg(delivery amqp.Delivery) {
 
 	default:
 		log.Error().Msgf("Bad routing key: %s", delivery.RoutingKey)
+	}
+}
+
+func (h *Hub) HandleKafkaMsg(msg kafka.Message) {
+	routingKey := string(msg.Key)
+	if routingKey == "" {
+		log.Warn().Msg("Kafka message missing routing key")
+		return
+	}
+
+	if isTrace() {
+		//log.Trace().Msgf("Kafka msg received: %s -> %s", routingKey, string(msg.Value))
+		log.Info().Msgf("Kafka msg received: %s -> %s", routingKey, string(msg.Value))
+	}
+
+	s := strings.Split(routingKey, ".")
+
+	var o interface{}
+	err := json.Unmarshal(msg.Value, &o)
+	if err != nil {
+		log.Error().Msgf("JSON parse error: %s, msg: %s", err.Error(), string(msg.Value))
+		return
+	}
+
+	switch len(s) {
+	case 2:
+		h.routeMessage(&Event{
+			Scope:  s[0],
+			Stream: "",
+			Type:   s[1],
+			Topic:  getTopic(s[0], s[0], s[1]),
+			Body:   o,
+		})
+	case 3:
+		h.routeMessage(&Event{
+			Scope:  s[0],
+			Stream: s[1],
+			Type:   s[2],
+			Topic:  getTopic(s[0], s[1], s[2]),
+			Body:   o,
+		})
+	default:
+		log.Error().Msgf("Bad Kafka routing key: %s", routingKey)
 	}
 }
 

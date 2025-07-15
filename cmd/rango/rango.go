@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,14 +19,18 @@ import (
 	"github.com/openware/rango/pkg/amqp"
 	"github.com/openware/rango/pkg/auth"
 	"github.com/openware/rango/pkg/metrics"
+	"github.com/openware/rango/pkg/redpanda"
 	"github.com/openware/rango/pkg/routing"
 )
 
 var (
-	wsAddr   = flag.String("ws-addr", "", "http service address")
-	amqpAddr = flag.String("amqp-addr", "", "AMQP server address")
-	pubKey   = flag.String("pubKey", "config/rsa-key.pub", "Path to public key")
-	exName   = flag.String("exchange", "peatio.events.ranger", "Exchange name of upstream messages")
+	wsAddr        = flag.String("ws-addr", "", "http service address")
+	amqpAddr      = flag.String("amqp-addr", "", "AMQP server address")
+	redpandaAddr  = flag.String("redpanda-addr", "", "Redpanda server address")
+	pubKey        = flag.String("pubKey", "config/rsa-key.pub", "Path to public key")
+	exName        = flag.String("exchange", "peatio.events.ranger", "Exchange name of upstream messages")
+	redpandaGrpID = flag.String("group-id", "peatio.events.ranger", "Group ID for the consumers.")
+	topicPrefix   = flag.String("topic-prefix", "redpanda.events.", "Topic Prefix for redpanda")
 )
 
 const prefix = "Bearer "
@@ -116,6 +121,21 @@ func getAMQPConnectionURL() string {
 	return fmt.Sprintf("amqp://%s:%s@%s:%s", user, pass, host, port)
 }
 
+func getRedpandaConfig() redpanda.RedpandaConfig {
+	ssl_enabled, _ := strconv.ParseBool(getEnv("REDPANDA_SSL_ENABLE", "false"))
+
+	return redpanda.RedpandaConfig{
+		Brokers:       strings.Split(getEnv("REDPANDA_BROKERS", ""), ","),
+		Username:      getEnv("REDPANDA_USERNAME", ""),
+		Password:      getEnv("REDPANDA_PASSWORD", ""),
+		EnableSSL:     ssl_enabled,
+		SASLMechanism: getEnv("REDPANDA_SASL_MECHANISM", ""),
+		SASLProtocol:  getEnv("REDPANDA_SASL_PROTOCOL", ""),
+		GroupID:       getEnv("REDPANDA_GROUP_ID", ""),
+		Debug:         getEnv("REDPANDA_DEBUG", ""),
+	}
+}
+
 func getServerAddress() string {
 	if *wsAddr != "" {
 		return *wsAddr
@@ -175,36 +195,48 @@ func main() {
 		return
 	}
 
-	rand.Seed(time.Now().UnixNano())
-	globalQName := fmt.Sprintf("rango.instance.%d", rand.Int())
-	privateQName := fmt.Sprintf("rango.instance.private-%d", rand.Int())
+	source := getEnv("MESSAGE_BROKER", "redpanda")
+	if source == "amqp" {
+		rand.Seed(time.Now().UnixNano())
+		globalQName := fmt.Sprintf("rango.instance.%d", rand.Int())
+		privateQName := fmt.Sprintf("rango.instance.private-%d", rand.Int())
 
-	// Establish AMQP session for all non private events
-	globalMq, err := amqp.NewAMQPSession(getAMQPConnectionURL())
-	if err != nil {
-		log.Fatal().Msgf("creating new AMQP session failed: %s", err.Error())
-		return
-	}
-	err = globalMq.Stream(*exName, globalQName, "#", hub.SkipPrivateMsg)
-	defer globalMq.Close(globalQName)
+		// Establish AMQP session for all non private events
+		globalMq, err := amqp.NewAMQPSession(getAMQPConnectionURL())
+		if err != nil {
+			log.Fatal().Msgf("creating new AMQP session failed: %s", err.Error())
+			return
+		}
+		err = globalMq.Stream(*exName, globalQName, "#", hub.SkipPrivateMsg)
+		defer globalMq.Close(globalQName)
 
-	if err != nil {
-		log.Fatal().Msgf("AMQP init failed: %s", err.Error())
-		return
-	}
+		if err != nil {
+			log.Fatal().Msgf("AMQP init failed: %s", err.Error())
+			return
+		}
 
-	// Establish AMQP session for private events
-	privateMq, err := amqp.NewAMQPSession(getAMQPConnectionURL())
-	if err != nil {
-		log.Fatal().Msgf("creating new AMQP session failed: %s", err.Error())
-		return
-	}
-	err = privateMq.Stream(*exName, privateQName, "private.#", hub.ReceiveMsg)
-	defer privateMq.Close(privateQName)
+		// Establish AMQP session for private events
+		privateMq, err := amqp.NewAMQPSession(getAMQPConnectionURL())
+		if err != nil {
+			log.Fatal().Msgf("creating new AMQP session failed: %s", err.Error())
+			return
+		}
+		err = privateMq.Stream(*exName, privateQName, "private.#", hub.ReceiveMsg)
+		defer privateMq.Close(privateQName)
 
-	if err != nil {
-		log.Fatal().Msgf("AMQP init failed: %s", err.Error())
-		return
+		if err != nil {
+			log.Fatal().Msgf("AMQP init failed: %s", err.Error())
+			return
+		}
+	} else {
+		globalSession := redpanda.NewRedpandaSession(getRedpandaConfig(), *topicPrefix+"public", *redpandaGrpID)
+		globalSession.Stream(*topicPrefix+"public", hub.HandleKafkaMsg)
+		defer globalSession.Close()
+
+		globalMq := redpanda.NewRedpandaSession(getRedpandaConfig(), *topicPrefix+"private", *redpandaGrpID)
+		globalMq.Stream(*topicPrefix+"private", hub.HandleKafkaMsg)
+
+		defer globalMq.Close()
 	}
 
 	go hub.ListenWebsocketEvents()
